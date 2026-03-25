@@ -13,6 +13,8 @@ AuthTastic is an offline-first Flutter vault for:
 
 The app stores vault data locally, encrypted at rest with AES-GCM using a per-vault Data Encryption Key (DEK) wrapped by a password-derived Key Encryption Key (KEK).
 
+App design created in [Figma using Figma Make](https://www.figma.com/make/DP1kXuCK3JnFrLglNWZPDt/Design-AuthTastic-App?p=f&t=EZ61gTaCTwOAzDCa-0)
+
 ## Table of Contents
 
 - [Overview](#overview)
