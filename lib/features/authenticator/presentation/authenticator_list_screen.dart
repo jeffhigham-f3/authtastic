@@ -104,6 +104,7 @@ class _AuthenticatorListScreenState
               itemCount: filtered.length,
             ),
       floatingActionButton: FloatingActionButton(
+        heroTag: 'authenticatorFab',
         onPressed: () async {
           await Navigator.of(context).push<void>(
             MaterialPageRoute(builder: (_) => const AddAuthenticatorScreen()),

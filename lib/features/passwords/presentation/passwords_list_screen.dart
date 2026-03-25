@@ -95,6 +95,7 @@ class _PasswordsListScreenState extends ConsumerState<PasswordsListScreen> {
             ),
       floatingActionButton: isUnlocked
           ? FloatingActionButton(
+              heroTag: 'passwordsFab',
               onPressed: () async {
                 await Navigator.of(context).push<void>(
                   MaterialPageRoute(builder: (_) => const NewPasswordScreen()),
