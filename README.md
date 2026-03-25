@@ -1,5 +1,9 @@
 # AuthTastic
 
+<p align="center">
+  <img src="public/design.png" alt="AuthTastic app design preview" width="1200" />
+</p>
+
 AuthTastic is an offline-first Flutter vault for:
 
 - password storage and generation
