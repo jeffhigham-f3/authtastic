@@ -411,13 +411,14 @@ class VaultController extends StateNotifier<VaultSessionState> {
     DateTime? createdAt,
   }) {
     final now = DateTime.now().toUtc();
+    final trimmedNotes = notes?.trim();
     return PasswordItem(
       id: id ?? _idGenerator.v4(),
       title: title.trim(),
       username: username.trim(),
       password: password,
       website: _normalizeWebsite(website),
-      notes: notes?.trim().isEmpty ?? true ? null : notes?.trim(),
+      notes: (trimmedNotes?.isEmpty ?? true) ? null : trimmedNotes,
       category: category,
       createdAt: createdAt ?? now,
       updatedAt: now,
