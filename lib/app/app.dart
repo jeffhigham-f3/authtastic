@@ -1,12 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../core/constants/app_colors.dart';
-import '../core/state/vault_controller.dart';
-import '../core/state/vault_session_state.dart';
-import '../features/home/presentation/home_shell.dart';
-import '../features/vault_unlock/presentation/create_vault_screen.dart';
-import '../features/vault_unlock/presentation/unlock_screen.dart';
+import 'package:authtastic/core/constants/app_colors.dart';
+import 'package:authtastic/core/state/vault_controller.dart';
+import 'package:authtastic/core/state/vault_session_state.dart';
+import 'package:authtastic/features/home/presentation/home_shell.dart';
+import 'package:authtastic/features/vault_unlock/presentation/create_vault_screen.dart';
+import 'package:authtastic/features/vault_unlock/presentation/unlock_screen.dart';
 
 class AuthTasticApp extends ConsumerStatefulWidget {
   const AuthTasticApp({super.key});
@@ -17,6 +19,9 @@ class AuthTasticApp extends ConsumerStatefulWidget {
 
 class _AuthTasticAppState extends ConsumerState<AuthTasticApp>
     with WidgetsBindingObserver {
+  Timer? _lockTimer;
+  static const _lockDelay = Duration(seconds: 15);
+
   @override
   void initState() {
     super.initState();
@@ -25,38 +30,53 @@ class _AuthTasticAppState extends ConsumerState<AuthTasticApp>
 
   @override
   void dispose() {
+    _lockTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
-      final session = ref.read(vaultControllerProvider);
-      final shouldAutoLock = session.data?.settings.autoLockEnabled ?? false;
-      if (session.isUnlocked && shouldAutoLock) {
+  void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
+    final session = ref.read(vaultControllerProvider);
+    final shouldAutoLock = session.data?.settings.autoLockEnabled ?? false;
+
+    if (lifecycleState == AppLifecycleState.paused &&
+        session.isUnlocked &&
+        shouldAutoLock) {
+      _lockTimer?.cancel();
+      _lockTimer = Timer(_lockDelay, () {
         ref.read(vaultControllerProvider.notifier).lock();
-      }
+      });
     }
-    super.didChangeAppLifecycleState(state);
+
+    if (lifecycleState == AppLifecycleState.resumed) {
+      _lockTimer?.cancel();
+      _lockTimer = null;
+    }
+
+    super.didChangeAppLifecycleState(lifecycleState);
   }
 
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(vaultControllerProvider);
 
+    final home = switch (session.status) {
+      VaultStatus.loading => const _LoadingScreen(),
+      VaultStatus.needsSetup => const CreateVaultScreen(),
+      VaultStatus.locked => const UnlockScreen(),
+      VaultStatus.unlocked => const HomeShell(),
+      VaultStatus.error =>
+        ref.read(vaultControllerProvider.notifier).hasExistingVault
+            ? const UnlockScreen()
+            : const CreateVaultScreen(),
+    };
+
     return MaterialApp(
       title: 'AuthTastic',
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(),
-      home: switch (session.status) {
-        VaultStatus.loading => const _LoadingScreen(),
-        VaultStatus.needsSetup => const CreateVaultScreen(),
-        VaultStatus.locked => const UnlockScreen(),
-        VaultStatus.unlocked => const HomeShell(),
-        VaultStatus.error => const UnlockScreen(),
-      },
+      home: home,
     );
   }
 

@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-import '../../../core/constants/app_colors.dart';
-import '../../../core/state/vault_controller.dart';
-import '../../../core/utils/otpauth_parser.dart';
+import 'package:authtastic/core/constants/app_colors.dart';
+import 'package:authtastic/core/state/vault_controller.dart';
+import 'package:authtastic/core/utils/otpauth_parser.dart';
+
+final RegExp _base32Regex = RegExp(r'^[A-Z2-7=]+$', caseSensitive: false);
 
 enum AddAuthenticatorMode { scan, manual }
 
@@ -53,24 +57,56 @@ class _AddAuthenticatorScreenState
     _algorithm = parsed.algorithm.toUpperCase();
   }
 
+  Future<void> _saveScanned() async {
+    if (_scanned == null) return;
+    setState(() => _saving = true);
+    try {
+      final notifier = ref.read(vaultControllerProvider.notifier);
+      final item = notifier.buildOtp(
+        issuer: _issuerController.text,
+        accountName: _accountController.text,
+        secret: _secretController.text,
+        algorithm: _algorithm,
+        digits: int.tryParse(_digitsController.text) ?? 6,
+        period: int.tryParse(_periodController.text) ?? 30,
+      );
+      await notifier.addOtp(item);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } on Exception {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to save authenticator.')),
+      );
+    }
+  }
+
   Future<void> _saveFromForm() async {
     final form = _formKey.currentState;
     if (form == null || !form.validate()) return;
 
     setState(() => _saving = true);
-    final notifier = ref.read(vaultControllerProvider.notifier);
-    final item = notifier.buildOtp(
-      issuer: _issuerController.text,
-      accountName: _accountController.text,
-      secret: _secretController.text,
-      algorithm: _algorithm,
-      digits: int.tryParse(_digitsController.text) ?? 6,
-      period: int.tryParse(_periodController.text) ?? 30,
-    );
-    await notifier.addOtp(item);
-    if (!mounted) return;
-    setState(() => _saving = false);
-    Navigator.of(context).pop();
+    try {
+      final notifier = ref.read(vaultControllerProvider.notifier);
+      final item = notifier.buildOtp(
+        issuer: _issuerController.text,
+        accountName: _accountController.text,
+        secret: _secretController.text,
+        algorithm: _algorithm,
+        digits: int.tryParse(_digitsController.text) ?? 6,
+        period: int.tryParse(_periodController.text) ?? 30,
+      );
+      await notifier.addOtp(item);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } on Exception {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to save authenticator.')),
+      );
+    }
   }
 
   @override
@@ -101,9 +137,7 @@ class _AddAuthenticatorScreenState
               ],
               selected: <AddAuthenticatorMode>{_mode},
               onSelectionChanged: (value) {
-                setState(() {
-                  _mode = value.first;
-                });
+                setState(() => _mode = value.first);
               },
             ),
             const SizedBox(height: 20),
@@ -136,6 +170,7 @@ class _AddAuthenticatorScreenState
                     if (raw == null) return;
                     final parsed = OtpAuthParser.parse(raw);
                     if (parsed == null) return;
+                    unawaited(_scannerController.stop());
                     setState(() {
                       _scanned = parsed;
                       _hydrateFromParsed(parsed);
@@ -169,7 +204,9 @@ class _AddAuthenticatorScreenState
               Expanded(
                 child: OutlinedButton(
                   onPressed: () {
-                    setState(() => _scanned = null);
+                    _scanned = null;
+                    unawaited(_scannerController.start());
+                    setState(() {});
                   },
                   child: const Text('Scan Again'),
                 ),
@@ -177,7 +214,7 @@ class _AddAuthenticatorScreenState
               const SizedBox(width: 12),
               Expanded(
                 child: FilledButton(
-                  onPressed: _saving ? null : _saveFromForm,
+                  onPressed: _saving ? null : _saveScanned,
                   child: Text(_saving ? 'Saving...' : 'Save Account'),
                 ),
               ),
@@ -222,7 +259,11 @@ class _AddAuthenticatorScreenState
               controller: _secretController,
               decoration: const InputDecoration(hintText: 'Base32 secret'),
               validator: (value) {
-                if ((value ?? '').trim().isEmpty) return 'Secret is required.';
+                final trimmed = (value ?? '').trim().replaceAll(' ', '');
+                if (trimmed.isEmpty) return 'Secret is required.';
+                if (!_base32Regex.hasMatch(trimmed)) {
+                  return 'Invalid base32 secret.';
+                }
                 return null;
               },
             ),

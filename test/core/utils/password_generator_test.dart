@@ -9,16 +9,22 @@ void main() {
       expect(value.length, 24);
     });
 
-    test('falls back to alphanumeric if no flags enabled', () {
+    test('throws ArgumentError for length < 8', () {
       final generator = PasswordGenerator();
-      final value = generator.generate(
-        length: 16,
-        includeLower: false,
-        includeUpper: false,
-        includeDigits: false,
-        includeSymbols: false,
+      expect(
+        () => generator.generate(length: 4),
+        throwsA(isA<ArgumentError>()),
       );
-      expect(value.length, 16);
+    });
+
+    test('generated password contains at least one char from each class', () {
+      final generator = PasswordGenerator();
+      for (var i = 0; i < 20; i++) {
+        final value = generator.generate(length: 16);
+        expect(value, matches(RegExp(r'[a-z]')));
+        expect(value, matches(RegExp(r'[A-Z]')));
+        expect(value, matches(RegExp(r'[0-9]')));
+      }
     });
   });
 }

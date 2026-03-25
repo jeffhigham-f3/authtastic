@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/constants/app_colors.dart';
-import '../../../core/models/password_item.dart';
-import '../../../core/state/vault_controller.dart';
+import 'package:authtastic/core/constants/app_colors.dart';
+import 'package:authtastic/core/models/password_item.dart';
+import 'package:authtastic/core/state/vault_controller.dart';
 
 class NewPasswordScreen extends ConsumerStatefulWidget {
   const NewPasswordScreen({super.key, this.initialItem});
@@ -24,6 +24,7 @@ class _NewPasswordScreenState extends ConsumerState<NewPasswordScreen> {
   final _passwordController = TextEditingController();
   final _notesController = TextEditingController();
   bool _saving = false;
+  bool _obscurePassword = true;
 
   @override
   void initState() {
@@ -53,6 +54,7 @@ class _NewPasswordScreenState extends ConsumerState<NewPasswordScreen> {
         .read(vaultControllerProvider.notifier)
         .generatePassword();
     _passwordController.text = generated;
+    setState(() => _obscurePassword = false);
   }
 
   Future<void> _save() async {
@@ -60,27 +62,35 @@ class _NewPasswordScreenState extends ConsumerState<NewPasswordScreen> {
     if (form == null || !form.validate()) return;
 
     setState(() => _saving = true);
-    final controller = ref.read(vaultControllerProvider.notifier);
-    final base = widget.initialItem;
-    final entry = controller.buildPassword(
-      id: base?.id,
-      createdAt: base?.createdAt,
-      title: _titleController.text,
-      username: _usernameController.text,
-      password: _passwordController.text,
-      website: _websiteController.text,
-      notes: _notesController.text,
-      category: base?.category,
-    );
+    try {
+      final controller = ref.read(vaultControllerProvider.notifier);
+      final base = widget.initialItem;
+      final entry = controller.buildPassword(
+        id: base?.id,
+        createdAt: base?.createdAt,
+        title: _titleController.text,
+        username: _usernameController.text,
+        password: _passwordController.text,
+        website: _websiteController.text,
+        notes: _notesController.text,
+        category: base?.category,
+      );
 
-    if (widget.isEditing) {
-      await controller.updatePassword(entry);
-    } else {
-      await controller.addPassword(entry);
+      if (widget.isEditing) {
+        await controller.updatePassword(entry);
+      } else {
+        await controller.addPassword(entry);
+      }
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } on Exception {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Failed to save password.')));
     }
-
-    if (!mounted) return;
-    Navigator.of(context).pop();
   }
 
   @override
@@ -177,8 +187,18 @@ class _NewPasswordScreenState extends ConsumerState<NewPasswordScreen> {
                 ),
                 child: TextFormField(
                   controller: _passwordController,
-                  decoration: const InputDecoration(
+                  obscureText: _obscurePassword,
+                  decoration: InputDecoration(
                     hintText: 'Enter or generate password',
+                    suffixIcon: IconButton(
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility
+                            : Icons.visibility_off,
+                      ),
+                    ),
                   ),
                   validator: (value) => (value == null || value.isEmpty)
                       ? 'Password is required.'

@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../core/constants/app_colors.dart';
-import '../../../core/models/password_item.dart';
-import '../../../core/state/vault_controller.dart';
-import 'new_password_screen.dart';
+import 'package:authtastic/core/constants/app_colors.dart';
+import 'package:authtastic/core/models/password_item.dart';
+import 'package:authtastic/core/state/vault_controller.dart';
+import 'package:authtastic/shared/utils/clipboard_helper.dart';
+import 'package:authtastic/shared/utils/emoji_from_title.dart';
+import 'package:authtastic/features/passwords/presentation/new_password_screen.dart';
 
 class PasswordDetailScreen extends ConsumerStatefulWidget {
   const PasswordDetailScreen({required this.itemId, super.key});
@@ -22,9 +23,9 @@ class PasswordDetailScreen extends ConsumerStatefulWidget {
 class _PasswordDetailScreenState extends ConsumerState<PasswordDetailScreen> {
   bool _showPassword = false;
 
-  PasswordItem? get _item {
+  PasswordItem? _findItem() {
     final passwords =
-        ref.read(vaultControllerProvider).data?.passwords ??
+        ref.watch(vaultControllerProvider).data?.passwords ??
         const <PasswordItem>[];
     for (final item in passwords) {
       if (item.id == widget.itemId) return item;
@@ -32,17 +33,21 @@ class _PasswordDetailScreenState extends ConsumerState<PasswordDetailScreen> {
     return null;
   }
 
-  Future<void> _copy(String value, String label) async {
-    await Clipboard.setData(ClipboardData(text: value));
+  void _copy(String value, String label) {
+    copyAndScheduleClear(value);
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('$label copied to clipboard')));
+    ).showSnackBar(SnackBar(content: Text('$label copied (clears in 30s)')));
   }
 
   Future<void> _openWebsite(String website) async {
-    final uri = Uri.parse(website);
-    if (await canLaunchUrl(uri)) {
+    var url = website;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://$url';
+    }
+    final uri = Uri.tryParse(url);
+    if (uri != null && await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
       await ref
           .read(vaultControllerProvider.notifier)
@@ -66,17 +71,17 @@ class _PasswordDetailScreenState extends ConsumerState<PasswordDetailScreen> {
   Future<void> _delete(PasswordItem item) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) {
+      builder: (ctx) {
         return AlertDialog(
           title: const Text('Delete password?'),
           content: Text('Delete ${item.title}? This cannot be undone.'),
           actions: <Widget>[
             TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
+              onPressed: () => Navigator.of(ctx).pop(false),
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
+              onPressed: () => Navigator.of(ctx).pop(true),
               style: FilledButton.styleFrom(backgroundColor: Colors.red),
               child: const Text('Delete'),
             ),
@@ -93,10 +98,15 @@ class _PasswordDetailScreenState extends ConsumerState<PasswordDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final item = _item;
+    final item = _findItem();
     if (item == null) {
       return const Scaffold(body: Center(child: Text('Password not found.')));
     }
+
+    final displayUrl = (item.website ?? '')
+        .replaceFirst('https://', '')
+        .replaceFirst('http://', '')
+        .replaceFirst('www.', '');
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -127,7 +137,46 @@ class _PasswordDetailScreenState extends ConsumerState<PasswordDetailScreen> {
       body: ListView(
         padding: const EdgeInsets.all(24),
         children: <Widget>[
-          _Header(item: item),
+          Row(
+            children: <Widget>[
+              Container(
+                width: 64,
+                height: 64,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  gradient: const LinearGradient(
+                    colors: <Color>[Color(0x1A2B7FFF), Color(0x1AAD46FF)],
+                  ),
+                ),
+                child: Text(
+                  emojiFromTitle(item.title),
+                  style: const TextStyle(fontSize: 30),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      item.title,
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    if (displayUrl.isNotEmpty)
+                      Text(
+                        displayUrl,
+                        style: const TextStyle(color: AppColors.textSecondary),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 16),
           _InfoCard(
             label: 'Username',
@@ -165,7 +214,7 @@ class _PasswordDetailScreenState extends ConsumerState<PasswordDetailScreen> {
             const SizedBox(height: 12),
             _InfoCard(
               label: 'Website',
-              value: item.website!,
+              value: displayUrl,
               actions: <Widget>[
                 TextButton.icon(
                   onPressed: () => _openWebsite(item.website!),
@@ -183,53 +232,6 @@ class _PasswordDetailScreenState extends ConsumerState<PasswordDetailScreen> {
           ],
         ],
       ),
-    );
-  }
-}
-
-class _Header extends StatelessWidget {
-  const _Header({required this.item});
-
-  final PasswordItem item;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: <Widget>[
-        Container(
-          width: 64,
-          height: 64,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            gradient: const LinearGradient(
-              colors: <Color>[Color(0x1A2B7FFF), Color(0x1AAD46FF)],
-            ),
-          ),
-          child: const Text('🔐', style: TextStyle(fontSize: 30)),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                item.title,
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              if (item.website != null)
-                Text(
-                  item.website!.replaceFirst('https://', ''),
-                  style: const TextStyle(color: AppColors.textSecondary),
-                ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }

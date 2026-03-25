@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../../../core/constants/app_colors.dart';
-import '../../../core/models/vault_settings.dart';
-import '../../../core/state/vault_controller.dart';
+import 'package:authtastic/core/constants/app_colors.dart';
+import 'package:authtastic/core/models/vault_settings.dart';
+import 'package:authtastic/core/state/vault_controller.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -127,13 +127,14 @@ class SettingsScreen extends ConsumerWidget {
     BuildContext context,
     VaultController controller,
   ) async {
-    final currentController = TextEditingController();
-    final newController = TextEditingController();
+    final currentCtrl = TextEditingController();
+    final newCtrl = TextEditingController();
+    final confirmCtrl = TextEditingController();
     final formKey = GlobalKey<FormState>();
 
     final shouldSave = await showDialog<bool>(
       context: context,
-      builder: (context) {
+      builder: (ctx) {
         return AlertDialog(
           title: const Text('Change Master Password'),
           content: Form(
@@ -142,7 +143,7 @@ class SettingsScreen extends ConsumerWidget {
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
                 TextFormField(
-                  controller: currentController,
+                  controller: currentCtrl,
                   obscureText: true,
                   decoration: const InputDecoration(
                     labelText: 'Current password',
@@ -152,24 +153,38 @@ class SettingsScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
-                  controller: newController,
+                  controller: newCtrl,
                   obscureText: true,
                   decoration: const InputDecoration(labelText: 'New password'),
                   validator: (value) =>
                       (value ?? '').length < 8 ? 'Min 8 characters' : null,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: confirmCtrl,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Confirm new password',
+                  ),
+                  validator: (value) {
+                    if (value != newCtrl.text) {
+                      return 'Passwords do not match';
+                    }
+                    return null;
+                  },
                 ),
               ],
             ),
           ),
           actions: <Widget>[
             TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
+              onPressed: () => Navigator.of(ctx).pop(false),
               child: const Text('Cancel'),
             ),
             FilledButton(
               onPressed: () {
                 if (formKey.currentState?.validate() ?? false) {
-                  Navigator.of(context).pop(true);
+                  Navigator.of(ctx).pop(true);
                 }
               },
               child: const Text('Save'),
@@ -179,18 +194,28 @@ class SettingsScreen extends ConsumerWidget {
       },
     );
 
-    if (shouldSave != true) return;
+    if (shouldSave != true) {
+      currentCtrl.dispose();
+      newCtrl.dispose();
+      confirmCtrl.dispose();
+      return;
+    }
+
     final success = await controller.changeMasterPassword(
-      currentPassword: currentController.text,
-      newPassword: newController.text,
+      currentPassword: currentCtrl.text,
+      newPassword: newCtrl.text,
     );
+    currentCtrl.dispose();
+    newCtrl.dispose();
+    confirmCtrl.dispose();
+
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           success
               ? 'Master password updated.'
-              : 'Failed to update master password.',
+              : 'Failed to update. Check your current password.',
         ),
       ),
     );
@@ -200,34 +225,48 @@ class SettingsScreen extends ConsumerWidget {
     BuildContext context, {
     required String title,
     required String actionLabel,
-  }) {
-    final controller = TextEditingController();
-    return showDialog<String>(
+  }) async {
+    final ctrl = TextEditingController();
+    final result = await showDialog<String>(
       context: context,
-      builder: (context) {
+      builder: (ctx) {
         return AlertDialog(
           title: Text(title),
           content: TextField(
-            controller: controller,
+            controller: ctrl,
             obscureText: true,
             decoration: const InputDecoration(
               labelText: 'Passphrase',
-              hintText: 'Required for encrypted transfer',
+              hintText: 'At least 6 characters',
             ),
           ),
           actions: <Widget>[
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(ctx).pop(),
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () => Navigator.of(context).pop(controller.text),
+              onPressed: () {
+                if (ctrl.text.trim().length < 6) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Passphrase must be at least 6 characters.',
+                      ),
+                    ),
+                  );
+                  return;
+                }
+                Navigator.of(ctx).pop(ctrl.text);
+              },
               child: Text(actionLabel),
             ),
           ],
         );
       },
     );
+    ctrl.dispose();
+    return result;
   }
 
   Future<void> _exportVault(
@@ -239,9 +278,7 @@ class SettingsScreen extends ConsumerWidget {
       title: 'Export Vault',
       actionLabel: 'Export',
     );
-    if (passphrase == null || passphrase.trim().length < 6) {
-      return;
-    }
+    if (passphrase == null) return;
 
     final path = await controller.exportVault(passphrase);
     if (path == null) {
@@ -282,9 +319,7 @@ class SettingsScreen extends ConsumerWidget {
       title: 'Import Vault',
       actionLabel: 'Continue',
     );
-    if (passphrase == null || passphrase.trim().length < 6) {
-      return;
-    }
+    if (passphrase == null) return;
 
     if (!context.mounted) return;
     final mode = await _promptImportMode(context);
@@ -306,21 +341,21 @@ class SettingsScreen extends ConsumerWidget {
   Future<ImportMode?> _promptImportMode(BuildContext context) {
     return showDialog<ImportMode>(
       context: context,
-      builder: (context) {
+      builder: (ctx) {
         return AlertDialog(
           title: const Text('Import Mode'),
           content: const Text('Choose how to apply imported entries.'),
           actions: <Widget>[
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(ctx).pop(),
               child: const Text('Cancel'),
             ),
             OutlinedButton(
-              onPressed: () => Navigator.of(context).pop(ImportMode.merge),
+              onPressed: () => Navigator.of(ctx).pop(ImportMode.merge),
               child: const Text('Merge'),
             ),
             FilledButton(
-              onPressed: () => Navigator.of(context).pop(ImportMode.replace),
+              onPressed: () => Navigator.of(ctx).pop(ImportMode.replace),
               child: const Text('Replace'),
             ),
           ],

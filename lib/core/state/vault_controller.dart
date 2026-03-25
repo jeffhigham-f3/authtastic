@@ -7,15 +7,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:uuid/uuid.dart';
 
-import '../crypto/vault_crypto.dart';
-import '../models/otp_item.dart';
-import '../models/password_item.dart';
-import '../models/vault_data.dart';
-import '../models/vault_settings.dart';
-import '../storage/local_vault_store.dart';
-import '../storage/secure_key_store.dart';
-import '../utils/password_generator.dart';
-import 'vault_session_state.dart';
+import 'package:authtastic/core/crypto/vault_crypto.dart';
+import 'package:authtastic/core/models/otp_item.dart';
+import 'package:authtastic/core/models/password_item.dart';
+import 'package:authtastic/core/models/vault_data.dart';
+import 'package:authtastic/core/models/vault_settings.dart';
+import 'package:authtastic/core/storage/local_vault_store.dart';
+import 'package:authtastic/core/storage/secure_key_store.dart';
+import 'package:authtastic/core/utils/password_generator.dart';
+import 'package:authtastic/core/state/vault_session_state.dart';
 
 enum ImportMode { merge, replace }
 
@@ -46,7 +46,8 @@ class VaultController extends StateNotifier<VaultSessionState> {
        _idGenerator = idGenerator,
        _passwordGenerator = passwordGenerator,
        super(VaultSessionState.loading()) {
-    unawaited(initialize());
+    unawaited(_initCompleter.future);
+    _initCompleter.complete(initialize());
   }
 
   final VaultCrypto _crypto;
@@ -56,27 +57,36 @@ class VaultController extends StateNotifier<VaultSessionState> {
   final Uuid _idGenerator;
   final PasswordGenerator _passwordGenerator;
 
+  final _initCompleter = Completer<void>();
+  final _opLock = _AsyncMutex();
+
   SecretKey? _sessionDek;
-  String? _sessionPassword;
+  bool _hasExistingVault = false;
 
   Future<void> initialize() async {
     state = VaultSessionState.loading();
-    final metadata = await _keyStore.readKeyMetadata();
-    if (metadata == null) {
-      state = VaultSessionState.needsSetup();
-      return;
+    try {
+      final metadata = await _keyStore.readKeyMetadata();
+      _hasExistingVault = metadata != null;
+      if (metadata == null) {
+        state = VaultSessionState.needsSetup();
+        return;
+      }
+      state = VaultSessionState.locked();
+    } on Exception catch (e) {
+      state = VaultSessionState.error('Failed to initialize: $e');
     }
-    state = VaultSessionState.locked();
   }
 
   Future<bool> createVault({
     required String masterPassword,
     required bool biometricEnabled,
   }) async {
+    await _initCompleter.future;
     final password = masterPassword.trim();
     if (password.length < 8) {
-      state = VaultSessionState.error(
-        'Master password must be at least 8 characters.',
+      state = VaultSessionState.needsSetup(
+        errorMessage: 'Master password must be at least 8 characters.',
       );
       return false;
     }
@@ -105,28 +115,30 @@ class VaultController extends StateNotifier<VaultSessionState> {
         updatedAt: DateTime.now().toUtc(),
       );
 
-      _sessionDek = SecretKey(dekBytes);
-      _sessionPassword = password;
+      _sessionDek = SecretKey(List<int>.from(dekBytes));
+      dekBytes.fillRange(0, dekBytes.length, 0);
+      _hasExistingVault = true;
       await _persistVault(vault);
 
       if (biometricEnabled) {
-        await _keyStore.saveBiometricPassword(password);
+        final dekB64 = _crypto.b64Encode(await _sessionDek!.extractBytes());
+        await _keyStore.saveBiometricDek(dekB64);
       } else {
-        await _keyStore.clearBiometricPassword();
+        await _keyStore.clearBiometricDek();
       }
 
       state = VaultSessionState.unlocked(vault);
       return true;
-    } catch (_) {
-      state = VaultSessionState.error('Failed to create vault.');
+    } on Exception {
+      state = VaultSessionState.needsSetup(
+        errorMessage: 'Failed to create vault.',
+      );
       return false;
     }
   }
 
-  Future<bool> unlockWithPassword(
-    String masterPassword, {
-    bool cacheForBiometric = true,
-  }) async {
+  Future<bool> unlockWithPassword(String masterPassword) async {
+    await _initCompleter.future;
     final metadata = await _keyStore.readKeyMetadata();
     if (metadata == null) {
       state = VaultSessionState.needsSetup();
@@ -145,16 +157,18 @@ class VaultController extends StateNotifier<VaultSessionState> {
         mac: Mac(_crypto.b64Decode(metadata.wrappedDekMacB64)),
       );
       final dek = await _crypto.decrypt(box: wrappedBox, key: key);
-      _sessionDek = SecretKey(dek);
-      _sessionPassword = masterPassword;
+      _sessionDek = SecretKey(List<int>.from(dek));
+      dek.fillRange(0, dek.length, 0);
 
       final data = await _loadVault();
-      if (cacheForBiometric && data.settings.biometricEnabled) {
-        await _keyStore.saveBiometricPassword(masterPassword);
+
+      if (data.settings.biometricEnabled) {
+        final dekB64 = _crypto.b64Encode(await _sessionDek!.extractBytes());
+        await _keyStore.saveBiometricDek(dekB64);
       }
       state = VaultSessionState.unlocked(data);
       return true;
-    } catch (_) {
+    } on Exception {
       state = VaultSessionState.locked(
         errorMessage: 'Invalid master password.',
       );
@@ -163,12 +177,12 @@ class VaultController extends StateNotifier<VaultSessionState> {
   }
 
   Future<bool> unlockWithBiometrics() async {
+    await _initCompleter.future;
     try {
       final canCheck = await _localAuth.canCheckBiometrics;
       if (!canCheck) {
         state = VaultSessionState.locked(
-          errorMessage:
-              'Biometric authentication is not available on this device.',
+          errorMessage: 'Biometrics not available on this device.',
         );
         return false;
       }
@@ -179,16 +193,23 @@ class VaultController extends StateNotifier<VaultSessionState> {
         return false;
       }
 
-      final cachedPassword = await _keyStore.readBiometricPassword();
-      if (cachedPassword == null || cachedPassword.isEmpty) {
+      final dekB64 = await _keyStore.readBiometricDek();
+      if (dekB64 == null || dekB64.isEmpty) {
         state = VaultSessionState.locked(
           errorMessage:
-              'No biometric unlock secret is available. Use your master password.',
+              'No biometric secret available. Use your master password.',
         );
         return false;
       }
-      return unlockWithPassword(cachedPassword, cacheForBiometric: false);
-    } catch (_) {
+
+      final dekBytes = _crypto.b64Decode(dekB64);
+      _sessionDek = SecretKey(List<int>.from(dekBytes));
+      dekBytes.fillRange(0, dekBytes.length, 0);
+
+      final data = await _loadVault();
+      state = VaultSessionState.unlocked(data);
+      return true;
+    } on Exception {
       state = VaultSessionState.locked(
         errorMessage: 'Biometric unlock failed. Try master password.',
       );
@@ -198,7 +219,6 @@ class VaultController extends StateNotifier<VaultSessionState> {
 
   Future<void> lock() async {
     _sessionDek = null;
-    _sessionPassword = null;
     state = VaultSessionState.locked();
   }
 
@@ -206,148 +226,178 @@ class VaultController extends StateNotifier<VaultSessionState> {
     required String currentPassword,
     required String newPassword,
   }) async {
-    final metadata = await _keyStore.readKeyMetadata();
-    if (metadata == null || _sessionDek == null) {
-      state = VaultSessionState.locked();
+    final trimmedNew = newPassword.trim();
+    if (trimmedNew.length < 8) {
       return false;
     }
 
-    try {
-      final currentKey = await _crypto.derivePasswordKey(
-        password: currentPassword,
-        salt: _crypto.b64Decode(metadata.saltB64),
-        iterations: metadata.iterations,
-      );
-      final wrappedBox = SecretBox(
-        _crypto.b64Decode(metadata.wrappedDekCipherB64),
-        nonce: _crypto.b64Decode(metadata.wrappedDekNonceB64),
-        mac: Mac(_crypto.b64Decode(metadata.wrappedDekMacB64)),
-      );
-      final currentDek = await _crypto.decrypt(
-        box: wrappedBox,
-        key: currentKey,
-      );
-
-      final newSalt = await _crypto.randomBytes(16);
-      final newKek = await _crypto.derivePasswordKey(
-        password: newPassword,
-        salt: newSalt,
-      );
-      final rewrappedDek = await _crypto.encrypt(
-        plaintext: currentDek,
-        key: newKek,
-      );
-      final newMetadata = VaultKeyMetadata(
-        saltB64: _crypto.b64Encode(newSalt),
-        iterations: _crypto.defaultIterations,
-        wrappedDekNonceB64: _crypto.b64Encode(rewrappedDek.nonce),
-        wrappedDekCipherB64: _crypto.b64Encode(rewrappedDek.cipherText),
-        wrappedDekMacB64: _crypto.b64Encode(rewrappedDek.mac.bytes),
-      );
-      await _keyStore.saveKeyMetadata(newMetadata);
-
-      _sessionPassword = newPassword;
-      final currentState = state.data;
-      if (currentState?.settings.biometricEnabled ?? false) {
-        await _keyStore.saveBiometricPassword(newPassword);
+    return _opLock.run(() async {
+      final metadata = await _keyStore.readKeyMetadata();
+      if (metadata == null || _sessionDek == null) {
+        state = VaultSessionState.locked();
+        return false;
       }
-      return true;
-    } catch (_) {
-      state = state.copyWith(errorMessage: 'Unable to change master password.');
-      return false;
-    }
+
+      try {
+        final currentKey = await _crypto.derivePasswordKey(
+          password: currentPassword.trim(),
+          salt: _crypto.b64Decode(metadata.saltB64),
+          iterations: metadata.iterations,
+        );
+        final wrappedBox = SecretBox(
+          _crypto.b64Decode(metadata.wrappedDekCipherB64),
+          nonce: _crypto.b64Decode(metadata.wrappedDekNonceB64),
+          mac: Mac(_crypto.b64Decode(metadata.wrappedDekMacB64)),
+        );
+        final currentDek = await _crypto.decrypt(
+          box: wrappedBox,
+          key: currentKey,
+        );
+
+        final newSalt = await _crypto.randomBytes(16);
+        final newKek = await _crypto.derivePasswordKey(
+          password: trimmedNew,
+          salt: newSalt,
+        );
+        final rewrappedDek = await _crypto.encrypt(
+          plaintext: currentDek,
+          key: newKek,
+        );
+        currentDek.fillRange(0, currentDek.length, 0);
+
+        final newMetadata = VaultKeyMetadata(
+          saltB64: _crypto.b64Encode(newSalt),
+          iterations: _crypto.defaultIterations,
+          wrappedDekNonceB64: _crypto.b64Encode(rewrappedDek.nonce),
+          wrappedDekCipherB64: _crypto.b64Encode(rewrappedDek.cipherText),
+          wrappedDekMacB64: _crypto.b64Encode(rewrappedDek.mac.bytes),
+        );
+        await _keyStore.saveKeyMetadata(newMetadata);
+
+        if (state.data?.settings.biometricEnabled ?? false) {
+          final dekB64 = _crypto.b64Encode(await _sessionDek!.extractBytes());
+          await _keyStore.saveBiometricDek(dekB64);
+        }
+        return true;
+      } on Exception {
+        return false;
+      }
+    });
   }
 
   String generatePassword() => _passwordGenerator.generate();
 
   Future<void> addPassword(PasswordItem item) async {
-    final data = state.data;
-    if (data == null) return;
-    final now = DateTime.now().toUtc();
-    final updated = data.copyWith(
-      passwords: <PasswordItem>[...data.passwords, item],
-      updatedAt: now,
-    );
-    await _persistAndEmit(updated);
+    await _opLock.run(() async {
+      final data = state.data;
+      if (data == null) return;
+      final updated = data.copyWith(
+        passwords: List<PasswordItem>.unmodifiable(<PasswordItem>[
+          ...data.passwords,
+          item,
+        ]),
+        updatedAt: DateTime.now().toUtc(),
+      );
+      await _persistAndEmit(updated);
+    });
   }
 
   Future<void> updatePassword(PasswordItem item) async {
-    final data = state.data;
-    if (data == null) return;
-    final updatedPasswords = data.passwords.map((PasswordItem current) {
-      if (current.id != item.id) return current;
-      return item.copyWith(
+    await _opLock.run(() async {
+      final data = state.data;
+      if (data == null) return;
+      final updatedPasswords = data.passwords.map((PasswordItem current) {
+        if (current.id != item.id) return current;
+        return item.copyWith(
+          updatedAt: DateTime.now().toUtc(),
+          revision: current.revision + 1,
+        );
+      }).toList();
+      final updated = data.copyWith(
+        passwords: List<PasswordItem>.unmodifiable(updatedPasswords),
         updatedAt: DateTime.now().toUtc(),
-        revision: current.revision + 1,
       );
-    }).toList();
-    final updated = data.copyWith(
-      passwords: updatedPasswords,
-      updatedAt: DateTime.now().toUtc(),
-    );
-    await _persistAndEmit(updated);
+      await _persistAndEmit(updated);
+    });
   }
 
   Future<void> deletePassword(String id) async {
-    final data = state.data;
-    if (data == null) return;
-    final updated = data.copyWith(
-      passwords: data.passwords.where((item) => item.id != id).toList(),
-      updatedAt: DateTime.now().toUtc(),
-    );
-    await _persistAndEmit(updated);
+    await _opLock.run(() async {
+      final data = state.data;
+      if (data == null) return;
+      final updated = data.copyWith(
+        passwords: List<PasswordItem>.unmodifiable(
+          data.passwords.where((PasswordItem item) => item.id != id).toList(),
+        ),
+        updatedAt: DateTime.now().toUtc(),
+      );
+      await _persistAndEmit(updated);
+    });
   }
 
   Future<void> markPasswordUsed(String id) async {
-    final data = state.data;
-    if (data == null) return;
-    final now = DateTime.now().toUtc();
-    final updated = data.copyWith(
-      passwords: data.passwords.map((PasswordItem item) {
-        if (item.id != id) return item;
-        return item.copyWith(lastUsedAt: now, updatedAt: now);
-      }).toList(),
-      updatedAt: now,
-    );
-    await _persistAndEmit(updated);
+    await _opLock.run(() async {
+      final data = state.data;
+      if (data == null) return;
+      final now = DateTime.now().toUtc();
+      final updated = data.copyWith(
+        passwords: List<PasswordItem>.unmodifiable(
+          data.passwords.map((PasswordItem item) {
+            if (item.id != id) return item;
+            return item.copyWith(lastUsedAt: now, updatedAt: now);
+          }).toList(),
+        ),
+        updatedAt: now,
+      );
+      await _persistAndEmit(updated);
+    });
   }
 
   Future<void> addOtp(OtpItem item) async {
-    final data = state.data;
-    if (data == null) return;
-    final updated = data.copyWith(
-      otps: <OtpItem>[...data.otps, item],
-      updatedAt: DateTime.now().toUtc(),
-    );
-    await _persistAndEmit(updated);
+    await _opLock.run(() async {
+      final data = state.data;
+      if (data == null) return;
+      final updated = data.copyWith(
+        otps: List<OtpItem>.unmodifiable(<OtpItem>[...data.otps, item]),
+        updatedAt: DateTime.now().toUtc(),
+      );
+      await _persistAndEmit(updated);
+    });
   }
 
   Future<void> deleteOtp(String id) async {
-    final data = state.data;
-    if (data == null) return;
-    final updated = data.copyWith(
-      otps: data.otps.where((item) => item.id != id).toList(),
-      updatedAt: DateTime.now().toUtc(),
-    );
-    await _persistAndEmit(updated);
+    await _opLock.run(() async {
+      final data = state.data;
+      if (data == null) return;
+      final updated = data.copyWith(
+        otps: List<OtpItem>.unmodifiable(
+          data.otps.where((OtpItem item) => item.id != id).toList(),
+        ),
+        updatedAt: DateTime.now().toUtc(),
+      );
+      await _persistAndEmit(updated);
+    });
   }
 
   Future<void> updateSettings(VaultSettings settings) async {
-    final data = state.data;
-    if (data == null) return;
-    final updated = data.copyWith(
-      settings: settings,
-      updatedAt: DateTime.now().toUtc(),
-    );
-    await _persistAndEmit(updated);
+    await _opLock.run(() async {
+      final data = state.data;
+      if (data == null) return;
+      final updated = data.copyWith(
+        settings: settings,
+        updatedAt: DateTime.now().toUtc(),
+      );
+      await _persistAndEmit(updated);
 
-    if (!settings.biometricEnabled) {
-      await _keyStore.clearBiometricPassword();
-      return;
-    }
-    if (_sessionPassword != null && _sessionPassword!.isNotEmpty) {
-      await _keyStore.saveBiometricPassword(_sessionPassword!);
-    }
+      if (!settings.biometricEnabled) {
+        await _keyStore.clearBiometricDek();
+        return;
+      }
+      if (_sessionDek != null) {
+        final dekB64 = _crypto.b64Encode(await _sessionDek!.extractBytes());
+        await _keyStore.saveBiometricDek(dekB64);
+      }
+    });
   }
 
   PasswordItem buildPassword({
@@ -371,7 +421,6 @@ class VaultController extends StateNotifier<VaultSessionState> {
       category: category,
       createdAt: createdAt ?? now,
       updatedAt: now,
-      lastUsedAt: null,
     );
   }
 
@@ -390,8 +439,8 @@ class VaultController extends StateNotifier<VaultSessionState> {
       accountName: accountName.trim(),
       secret: secret.replaceAll(' ', ''),
       algorithm: algorithm.toUpperCase(),
-      digits: digits,
-      period: period,
+      digits: digits.clamp(6, 8),
+      period: period.clamp(15, 120),
       createdAt: now,
       updatedAt: now,
     );
@@ -428,7 +477,7 @@ class VaultController extends StateNotifier<VaultSessionState> {
         fileName: 'authtastic_backup_${DateTime.now().millisecondsSinceEpoch}',
         content: jsonEncode(exportJson),
       );
-    } catch (_) {
+    } on Exception {
       return null;
     }
   }
@@ -470,10 +519,12 @@ class VaultController extends StateNotifier<VaultSessionState> {
 
       await _persistAndEmit(resolved);
       return true;
-    } catch (_) {
+    } on Exception {
       return false;
     }
   }
+
+  bool get hasExistingVault => _hasExistingVault;
 
   Future<VaultData> _loadVault() async {
     final blob = await _localStore.loadVaultBlob();
@@ -500,12 +551,8 @@ class VaultController extends StateNotifier<VaultSessionState> {
   }
 
   Future<void> _persistAndEmit(VaultData data) async {
-    try {
-      await _persistVault(data);
-      state = VaultSessionState.unlocked(data);
-    } catch (_) {
-      state = VaultSessionState.error('Failed to persist vault data.');
-    }
+    await _persistVault(data);
+    state = VaultSessionState.unlocked(data);
   }
 
   Future<void> _persistVault(VaultData data) async {
@@ -532,7 +579,11 @@ class VaultController extends StateNotifier<VaultSessionState> {
     };
     for (final incoming in imported.passwords) {
       final existing = passwordMap[incoming.id];
-      if (existing == null || incoming.updatedAt.isAfter(existing.updatedAt)) {
+      if (existing == null) {
+        passwordMap[incoming.id] = incoming;
+      } else if (incoming.revision > existing.revision ||
+          (incoming.revision == existing.revision &&
+              incoming.updatedAt.isAfter(existing.updatedAt))) {
         passwordMap[incoming.id] = incoming;
       }
     }
@@ -548,10 +599,16 @@ class VaultController extends StateNotifier<VaultSessionState> {
     }
 
     return current.copyWith(
-      passwords: passwordMap.values.toList()
-        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt)),
-      otps: otpMap.values.toList()
-        ..sort((a, b) => a.issuer.compareTo(b.issuer)),
+      passwords: List<PasswordItem>.unmodifiable(
+        passwordMap.values.toList()..sort(
+          (PasswordItem a, PasswordItem b) =>
+              b.updatedAt.compareTo(a.updatedAt),
+        ),
+      ),
+      otps: List<OtpItem>.unmodifiable(
+        otpMap.values.toList()
+          ..sort((OtpItem a, OtpItem b) => a.issuer.compareTo(b.issuer)),
+      ),
       updatedAt: DateTime.now().toUtc(),
     );
   }
@@ -564,5 +621,22 @@ class VaultController extends StateNotifier<VaultSessionState> {
       return value;
     }
     return 'https://$value';
+  }
+}
+
+class _AsyncMutex {
+  Future<void>? _last;
+
+  Future<T> run<T>(Future<T> Function() fn) async {
+    while (_last != null) {
+      try {
+        await _last;
+      } on Exception {
+        // Previous op failed; continue.
+      }
+    }
+    final future = fn();
+    _last = future.whenComplete(() => _last = null);
+    return future;
   }
 }

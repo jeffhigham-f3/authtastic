@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
-import '../../../core/constants/app_colors.dart';
-import '../../../core/models/password_item.dart';
-import '../../../core/state/vault_controller.dart';
-import '../../../core/state/vault_session_state.dart';
-import 'new_password_screen.dart';
-import 'password_detail_screen.dart';
+import 'package:authtastic/core/constants/app_colors.dart';
+import 'package:authtastic/core/models/password_item.dart';
+import 'package:authtastic/core/state/vault_controller.dart';
+import 'package:authtastic/core/state/vault_session_state.dart';
+import 'package:authtastic/shared/utils/emoji_from_title.dart';
+import 'package:authtastic/features/passwords/presentation/new_password_screen.dart';
+import 'package:authtastic/features/passwords/presentation/password_detail_screen.dart';
 
 class PasswordsListScreen extends ConsumerStatefulWidget {
   const PasswordsListScreen({super.key});
@@ -35,12 +36,14 @@ class _PasswordsListScreenState extends ConsumerState<PasswordsListScreen> {
         ? allItems
         : allItems
               .where(
-                (item) =>
+                (PasswordItem item) =>
                     item.title.toLowerCase().contains(query) ||
                     item.username.toLowerCase().contains(query) ||
                     (item.website ?? '').toLowerCase().contains(query),
               )
               .toList();
+
+    final isUnlocked = session.status == VaultStatus.unlocked;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -67,45 +70,42 @@ class _PasswordsListScreenState extends ConsumerState<PasswordsListScreen> {
           ),
         ),
       ),
-      body: switch (session.status) {
-        VaultStatus.unlocked =>
-          items.isEmpty
-              ? const _EmptyPasswordsView()
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 110),
-                  itemBuilder: (context, index) {
-                    final item = items[index];
-                    return _PasswordCard(
-                      item: item,
-                      onTap: () async {
-                        await Navigator.of(context).push<void>(
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                PasswordDetailScreen(itemId: item.id),
-                          ),
-                        );
-                        if (mounted) {
-                          setState(() {});
-                        }
-                      },
+      body: !isUnlocked
+          ? const Center(child: CircularProgressIndicator())
+          : items.isEmpty
+          ? _EmptyPasswordsView(hasQuery: query.isNotEmpty)
+          : ListView.separated(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 110),
+              itemBuilder: (context, index) {
+                final item = items[index];
+                return _PasswordCard(
+                  item: item,
+                  onTap: () async {
+                    await Navigator.of(context).push<void>(
+                      MaterialPageRoute(
+                        builder: (_) => PasswordDetailScreen(itemId: item.id),
+                      ),
                     );
+                    if (mounted) setState(() {});
                   },
-                  separatorBuilder: (_, index) => const SizedBox(height: 12),
-                  itemCount: items.length,
-                ),
-        _ => const SizedBox.shrink(),
-      },
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          await Navigator.of(context).push<void>(
-            MaterialPageRoute(builder: (_) => const NewPasswordScreen()),
-          );
-          if (mounted) setState(() {});
-        },
-        backgroundColor: AppColors.accentBlue,
-        foregroundColor: Colors.white,
-        child: const Icon(Icons.add),
-      ),
+                );
+              },
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
+              itemCount: items.length,
+            ),
+      floatingActionButton: isUnlocked
+          ? FloatingActionButton(
+              onPressed: () async {
+                await Navigator.of(context).push<void>(
+                  MaterialPageRoute(builder: (_) => const NewPasswordScreen()),
+                );
+                if (mounted) setState(() {});
+              },
+              backgroundColor: AppColors.accentBlue,
+              foregroundColor: Colors.white,
+              child: const Icon(Icons.add),
+            )
+          : null,
     );
   }
 }
@@ -153,7 +153,7 @@ class _PasswordCard extends StatelessWidget {
                 ),
               ),
               child: Text(
-                _emojiFromTitle(item.title),
+                emojiFromTitle(item.title),
                 style: const TextStyle(fontSize: 24),
               ),
             ),
@@ -226,30 +226,24 @@ class _PasswordCard extends StatelessWidget {
       ),
     );
   }
-
-  String _emojiFromTitle(String title) {
-    final lower = title.toLowerCase();
-    if (lower.contains('git')) return '🐙';
-    if (lower.contains('mail')) return '📧';
-    if (lower.contains('aws')) return '☁️';
-    if (lower.contains('netflix')) return '🎬';
-    if (lower.contains('spotify')) return '🎵';
-    return '🔐';
-  }
 }
 
 class _EmptyPasswordsView extends StatelessWidget {
-  const _EmptyPasswordsView();
+  const _EmptyPasswordsView({required this.hasQuery});
+
+  final bool hasQuery;
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(32),
+        padding: const EdgeInsets.all(32),
         child: Text(
-          'No passwords yet.\nTap + to add your first password.',
+          hasQuery
+              ? 'No passwords match your search.'
+              : 'No passwords yet.\nTap + to add your first password.',
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 16, color: AppColors.textSecondary),
+          style: const TextStyle(fontSize: 16, color: AppColors.textSecondary),
         ),
       ),
     );

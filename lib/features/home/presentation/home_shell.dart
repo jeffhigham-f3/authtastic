@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/constants/app_colors.dart';
-import '../../authenticator/presentation/authenticator_list_screen.dart';
-import '../../passwords/presentation/passwords_list_screen.dart';
-import '../../settings/presentation/settings_screen.dart';
+import 'package:authtastic/core/constants/app_colors.dart';
+import 'package:authtastic/features/authenticator/presentation/authenticator_list_screen.dart';
+import 'package:authtastic/features/passwords/presentation/passwords_list_screen.dart';
+import 'package:authtastic/features/settings/presentation/settings_screen.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -23,31 +23,39 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(index: _index, children: _screens),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (value) => setState(() => _index = value),
-        indicatorColor: const Color(0x1A2B7FFF),
-        destinations: const <NavigationDestination>[
-          NavigationDestination(
-            icon: Icon(Icons.lock_outline),
-            selectedIcon: Icon(Icons.lock),
-            label: 'Passwords',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.shield_outlined),
-            selectedIcon: Icon(Icons.shield),
-            label: 'Authenticator',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
-        ],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _index > 0) {
+          setState(() => _index = 0);
+        }
+      },
+      child: Scaffold(
+        body: IndexedStack(index: _index, children: _screens),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _index,
+          onDestinationSelected: (value) => setState(() => _index = value),
+          indicatorColor: const Color(0x1A2B7FFF),
+          destinations: const <NavigationDestination>[
+            NavigationDestination(
+              icon: Icon(Icons.lock_outline),
+              selectedIcon: Icon(Icons.lock),
+              label: 'Passwords',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.shield_outlined),
+              selectedIcon: Icon(Icons.shield),
+              label: 'Authenticator',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.settings_outlined),
+              selectedIcon: Icon(Icons.settings),
+              label: 'Settings',
+            ),
+          ],
+        ),
+        backgroundColor: AppColors.bg,
       ),
-      backgroundColor: AppColors.bg,
     );
   }
 }

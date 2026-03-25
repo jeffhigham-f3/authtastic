@@ -41,14 +41,14 @@ class LocalVaultStore {
   static const String _exportExtension = '.authtastic';
 
   Future<File> _vaultFile() async {
-    final directory = await getApplicationDocumentsDirectory();
+    final directory = await getApplicationSupportDirectory();
     final filePath = p.join(directory.path, _vaultFileName);
     return File(filePath);
   }
 
   Future<bool> hasVaultBlob() async {
     final file = await _vaultFile();
-    return file.exists();
+    return file.existsSync();
   }
 
   Future<void> saveVaultBlob(EncryptedVaultBlob blob) async {
@@ -59,7 +59,7 @@ class LocalVaultStore {
 
   Future<EncryptedVaultBlob?> loadVaultBlob() async {
     final file = await _vaultFile();
-    if (!await file.exists()) {
+    if (!file.existsSync()) {
       return null;
     }
     final content = await file.readAsString();
@@ -76,15 +76,19 @@ class LocalVaultStore {
     required String content,
   }) async {
     final directory = await getTemporaryDirectory();
-    final path = p.join(directory.path, '$fileName$_exportExtension');
+    final sanitized = p.basename(fileName).replaceAll(RegExp(r'[^\w\-.]'), '_');
+    final path = p.join(directory.path, '$sanitized$_exportExtension');
     final file = File(path);
     await file.create(recursive: true);
     await file.writeAsString(content, flush: true);
     return file.path;
   }
 
-  Future<String> readTextFile(String path) async {
-    final file = File(path);
+  Future<String> readTextFile(String filePath) async {
+    final file = File(filePath);
+    if (!file.existsSync()) {
+      throw FileSystemException('File not found', filePath);
+    }
     return file.readAsString();
   }
 }

@@ -28,12 +28,24 @@ class VaultKeyMetadata {
   }
 
   factory VaultKeyMetadata.fromJson(Map<String, dynamic> json) {
+    final saltB64 = json['saltB64'];
+    final iterations = json['iterations'];
+    final nonce = json['wrappedDekNonceB64'];
+    final cipher = json['wrappedDekCipherB64'];
+    final mac = json['wrappedDekMacB64'];
+    if (saltB64 is! String ||
+        iterations is! num ||
+        nonce is! String ||
+        cipher is! String ||
+        mac is! String) {
+      throw const FormatException('Corrupted vault key metadata');
+    }
     return VaultKeyMetadata(
-      saltB64: json['saltB64'] as String,
-      iterations: (json['iterations'] as num).toInt(),
-      wrappedDekNonceB64: json['wrappedDekNonceB64'] as String,
-      wrappedDekCipherB64: json['wrappedDekCipherB64'] as String,
-      wrappedDekMacB64: json['wrappedDekMacB64'] as String,
+      saltB64: saltB64,
+      iterations: iterations.toInt(),
+      wrappedDekNonceB64: nonce,
+      wrappedDekCipherB64: cipher,
+      wrappedDekMacB64: mac,
     );
   }
 }
@@ -43,7 +55,7 @@ class SecureKeyStore {
     : _storage = storage ?? const FlutterSecureStorage();
 
   static const String _vaultKeyMetaKey = 'vault_key_metadata_v1';
-  static const String _biometricPasswordKey = 'vault_biometric_password_v1';
+  static const String _biometricDekKey = 'vault_biometric_dek_v1';
 
   static const AndroidOptions _androidOptions = AndroidOptions();
 
@@ -74,26 +86,26 @@ class SecureKeyStore {
     return VaultKeyMetadata.fromJson(jsonDecode(value) as Map<String, dynamic>);
   }
 
-  Future<void> saveBiometricPassword(String password) async {
+  Future<void> saveBiometricDek(String dekB64) async {
     await _storage.write(
-      key: _biometricPasswordKey,
-      value: password,
+      key: _biometricDekKey,
+      value: dekB64,
       aOptions: _androidOptions,
       iOptions: _iosOptions,
     );
   }
 
-  Future<String?> readBiometricPassword() {
+  Future<String?> readBiometricDek() {
     return _storage.read(
-      key: _biometricPasswordKey,
+      key: _biometricDekKey,
       aOptions: _androidOptions,
       iOptions: _iosOptions,
     );
   }
 
-  Future<void> clearBiometricPassword() {
+  Future<void> clearBiometricDek() {
     return _storage.delete(
-      key: _biometricPasswordKey,
+      key: _biometricDekKey,
       aOptions: _androidOptions,
       iOptions: _iosOptions,
     );

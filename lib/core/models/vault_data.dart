@@ -1,6 +1,6 @@
-import 'password_item.dart';
-import 'otp_item.dart';
-import 'vault_settings.dart';
+import 'package:authtastic/core/models/otp_item.dart';
+import 'package:authtastic/core/models/password_item.dart';
+import 'package:authtastic/core/models/vault_settings.dart';
 
 class VaultData {
   const VaultData({
@@ -50,8 +50,8 @@ class VaultData {
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
-      'passwords': passwords.map((item) => item.toJson()).toList(),
-      'otps': otps.map((item) => item.toJson()).toList(),
+      'passwords': passwords.map((PasswordItem item) => item.toJson()).toList(),
+      'otps': otps.map((OtpItem item) => item.toJson()).toList(),
       'settings': settings.toJson(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),

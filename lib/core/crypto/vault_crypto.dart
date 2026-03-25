@@ -1,11 +1,11 @@
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:flutter/foundation.dart';
 
 class VaultCrypto {
-  VaultCrypto({this.defaultIterations = 210000});
+  VaultCrypto({this.defaultIterations = 600000});
 
   final int defaultIterations;
   final Random _random = Random.secure();
@@ -28,16 +28,25 @@ class VaultCrypto {
     return algorithm.deriveKeyFromPassword(password: password, nonce: salt);
   }
 
+  @visibleForTesting
+  Future<SecretBox> encryptWithNonce({
+    required Uint8List plaintext,
+    required SecretKey key,
+    required Uint8List nonce,
+  }) async {
+    final algorithm = AesGcm.with256bits();
+    return algorithm.encrypt(plaintext, secretKey: key, nonce: nonce);
+  }
+
   Future<SecretBox> encrypt({
     required Uint8List plaintext,
     required SecretKey key,
-    Uint8List? nonce,
   }) async {
     final algorithm = AesGcm.with256bits();
     return algorithm.encrypt(
       plaintext,
       secretKey: key,
-      nonce: nonce ?? await randomBytes(12),
+      nonce: await randomBytes(12),
     );
   }
 

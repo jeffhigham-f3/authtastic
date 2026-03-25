@@ -1,4 +1,4 @@
-import '../models/vault_data.dart';
+import 'package:authtastic/core/models/vault_data.dart';
 
 enum VaultStatus { loading, needsSetup, locked, unlocked, error }
 
@@ -27,8 +27,11 @@ class VaultSessionState {
     return const VaultSessionState(status: VaultStatus.loading);
   }
 
-  factory VaultSessionState.needsSetup() {
-    return const VaultSessionState(status: VaultStatus.needsSetup);
+  factory VaultSessionState.needsSetup({String? errorMessage}) {
+    return VaultSessionState(
+      status: VaultStatus.needsSetup,
+      errorMessage: errorMessage,
+    );
   }
 
   factory VaultSessionState.locked({String? errorMessage}) {

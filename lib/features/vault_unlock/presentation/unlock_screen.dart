@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/constants/app_colors.dart';
-import '../../../core/state/vault_controller.dart';
-import '../../../core/state/vault_session_state.dart';
+import 'package:authtastic/core/constants/app_colors.dart';
+import 'package:authtastic/core/state/vault_controller.dart';
+import 'package:authtastic/core/state/vault_session_state.dart';
 
 class UnlockScreen extends ConsumerStatefulWidget {
   const UnlockScreen({super.key});
@@ -25,9 +25,7 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
 
   Future<void> _unlockWithPassword() async {
     final password = _passwordController.text;
-    if (password.trim().isEmpty) {
-      return;
-    }
+    if (password.trim().isEmpty) return;
     setState(() => _unlocking = true);
     await ref
         .read(vaultControllerProvider.notifier)
@@ -45,10 +43,11 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(vaultControllerProvider);
-    final errorText = switch (state.status) {
-      VaultStatus.error => state.errorMessage,
-      VaultStatus.locked => state.errorMessage,
+    final session = ref.watch(vaultControllerProvider);
+    final biometricEnabled = session.data?.settings.biometricEnabled ?? false;
+    final errorText = switch (session.status) {
+      VaultStatus.error => session.errorMessage,
+      VaultStatus.locked => session.errorMessage,
       _ => null,
     };
 
@@ -111,36 +110,40 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
                         fontSize: 16,
                       ),
                     ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: 88,
-                      height: 88,
-                      child: FilledButton(
-                        onPressed: _unlocking ? null : _unlockWithBiometrics,
-                        style: FilledButton.styleFrom(
-                          shape: const CircleBorder(),
-                          backgroundColor: Colors.white.withValues(alpha: 0.22),
-                        ),
-                        child: const Icon(
-                          Icons.fingerprint,
-                          color: Colors.white,
-                          size: 40,
+                    if (biometricEnabled) ...<Widget>[
+                      const SizedBox(height: 24),
+                      SizedBox(
+                        width: 88,
+                        height: 88,
+                        child: FilledButton(
+                          onPressed: _unlocking ? null : _unlockWithBiometrics,
+                          style: FilledButton.styleFrom(
+                            shape: const CircleBorder(),
+                            backgroundColor: Colors.white.withValues(
+                              alpha: 0.22,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.fingerprint,
+                            color: Colors.white,
+                            size: 40,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Tap to unlock with Face ID',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.8),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Tap to unlock with biometrics',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.8),
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(height: 18),
                     TextField(
                       controller: _passwordController,
                       obscureText: _obscure,
                       decoration: InputDecoration(
-                        hintText: 'Or enter master password',
+                        hintText: 'Enter master password',
                         filled: true,
                         fillColor: Colors.white.withValues(alpha: 0.2),
                         hintStyle: TextStyle(
@@ -163,13 +166,23 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
                     ),
                     if (errorText != null) ...<Widget>[
                       const SizedBox(height: 12),
-                      Text(
-                        errorText,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
                         ),
-                        textAlign: TextAlign.center,
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          errorText,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                     ],
                     const SizedBox(height: 14),

@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/constants/app_colors.dart';
-import '../../../core/state/vault_controller.dart';
+import 'package:authtastic/core/constants/app_colors.dart';
+import 'package:authtastic/core/state/vault_controller.dart';
+import 'package:authtastic/core/state/vault_session_state.dart';
 
 class CreateVaultScreen extends ConsumerStatefulWidget {
   const CreateVaultScreen({super.key});
@@ -27,15 +28,7 @@ class _CreateVaultScreenState extends ConsumerState<CreateVaultScreen> {
 
   Future<void> _submit() async {
     final formState = _formKey.currentState;
-    if (formState == null || !formState.validate()) {
-      return;
-    }
-    if (_confirmController.text != _passwordController.text) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Passwords do not match.')));
-      return;
-    }
+    if (formState == null || !formState.validate()) return;
 
     setState(() => _submitting = true);
     final didCreate = await ref
@@ -57,6 +50,11 @@ class _CreateVaultScreenState extends ConsumerState<CreateVaultScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final session = ref.watch(vaultControllerProvider);
+    final errorText = session.status == VaultStatus.needsSetup
+        ? session.errorMessage
+        : null;
+
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: SafeArea(
@@ -84,17 +82,36 @@ class _CreateVaultScreenState extends ConsumerState<CreateVaultScreen> {
                     fontSize: 15,
                   ),
                 ),
+                if (errorText != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    errorText,
+                    style: const TextStyle(color: Colors.red, fontSize: 14),
+                  ),
+                ],
                 const SizedBox(height: 24),
                 _PasswordField(
                   controller: _passwordController,
                   label: 'Master Password',
                   hint: 'At least 8 characters',
+                  validator: (value) {
+                    if ((value ?? '').length < 8) {
+                      return 'Use at least 8 characters.';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 16),
                 _PasswordField(
                   controller: _confirmController,
                   label: 'Confirm Password',
                   hint: 'Re-enter your password',
+                  validator: (value) {
+                    if (value != _passwordController.text) {
+                      return 'Passwords do not match.';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 20),
                 SwitchListTile.adaptive(
@@ -155,11 +172,13 @@ class _PasswordField extends StatefulWidget {
     required this.controller,
     required this.label,
     required this.hint,
+    required this.validator,
   });
 
   final TextEditingController controller;
   final String label;
   final String hint;
+  final String? Function(String?) validator;
 
   @override
   State<_PasswordField> createState() => _PasswordFieldState();
@@ -183,13 +202,7 @@ class _PasswordFieldState extends State<_PasswordField> {
           icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
         ),
       ),
-      validator: (value) {
-        final text = value?.trim() ?? '';
-        if (text.length < 8) {
-          return 'Use at least 8 characters.';
-        }
-        return null;
-      },
+      validator: widget.validator,
     );
   }
 }
